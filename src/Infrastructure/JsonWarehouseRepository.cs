@@ -1,17 +1,23 @@
-﻿using System.Text.Json;
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
 using MyProject.Domain;
+using MyProject.Application;
 
 namespace MyProject.Infrastructure;
 
 public class JsonWarehouseRepository : IWarehouseRepository
 {
-    private readonly string _zonesFilePath;
-    private readonly List<StorageZone> _zones = new();
+    private readonly string _filePath = "warehouse_storage.json";
+    private List<StorageZone> _zones = new();
+    private List<Product> _products = new();
 
-    public JsonWarehouseRepository(string zonesFilePath)
+    public JsonWarehouseRepository()
     {
-        _zonesFilePath = zonesFilePath;
-        LoadData();
+        LoadDataWithRetry();
     }
 
     public Task<StorageZone?> GetZoneByIdAsync(Guid id)
@@ -20,58 +26,98 @@ public class JsonWarehouseRepository : IWarehouseRepository
         return Task.FromResult(zone);
     }
 
-    public Task UpdateStockAsync(Guid productId, Guid zoneId, int quantity)
+    public Task<Product?> GetProductByIdAsync(Guid id)
     {
-        return Task.CompletedTask;
+        var product = _products.FirstOrDefault(p => p.Id == id);
+        return Task.FromResult(product);
+    }
+
+    public Task<IEnumerable<StorageZone>> GetAllZonesAsync()
+    {
+        return Task.FromResult(_zones.AsEnumerable());
     }
 
     public async Task SaveChangesAsync()
     {
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        string jsonString = JsonSerializer.Serialize(_zones, options);
-        await File.WriteAllTextAsync(_zonesFilePath, jsonString);
-    }
+        int maxRetries = 3;
+        int delayMs = 200;
 
-    private void LoadData()
-    {
-        if (!File.Exists(_zonesFilePath))
-            {
-                SeedInitialData();
-                return;
-            }
-
+        for (int i = 0; i < maxRetries; i++)
+        {
             try
             {
-                string jsonString = File.ReadAllText(_zonesFilePath);
-                var deserialized = JsonSerializer.Deserialize<List<StorageZone>>(jsonString);
-                if (deserialized != null)
-                {
-                    _zones.Clear();
-                    _zones.AddRange(deserialized);
-                }
+                var payload = new WarehousePayload { Zones = _zones, Products = _products };
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string json = JsonSerializer.Serialize(payload, options);
+                await File.WriteAllTextAsync(_filePath, json);
+                return;
             }
-            catch
+            catch (IOException) when (i < maxRetries - 1)
             {
-                SeedInitialData();
+               
+                await Task.Delay(delayMs);
             }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Критична помилка I/O при збереженні стану: {ex.Message}", ex);
+            }
+        }
+    }
+
+    private void LoadDataWithRetry()
+    {
+        if (!File.Exists(_filePath))
+        {
+            SeedInitialData();
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(_filePath);
+            var payload = JsonSerializer.Deserialize<WarehousePayload>(json);
+            
+            if (payload != null)
+            {
+                _zones = payload.Zones ?? new();
+                _products = payload.Products ?? new();
+            }
+        }
+        catch (JsonException)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"\n[ПОМИЛКА СХОВИЩА] Файл {_filePath} пошкоджено! Структура JSON порушена.");
+            Console.WriteLine("Система автоматично відновлює чистий еталонний стан для безпечної роботи.");
+            Console.ResetColor();
+            Console.ReadKey();
+
+            SeedInitialData();
+        }
     }
 
     private void SeedInitialData()
     {
-        _zones.Clear();
-        _zones.Add(new StorageZone(
-            Guid.Parse("11111111-1111-1111-1111-111111111111"), 
-            new ZoneAddress("A", 1, 1), 
-            100.0 
+        _products.Add(new Product(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            new SKU("PROD-1001"),
+            "Ігровий ноутбук",
+            2.5
         ));
+
         _zones.Add(new StorageZone(
-            Guid.Parse("22222222-2222-2222-2222-222222222222"), 
-            new ZoneAddress("B", 2, 3), 
-            50.0
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            new ZoneAddress("A", 1, 1),
+            20.0  // Ліміт 20 кг
         ));
-        
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        string jsonString = JsonSerializer.Serialize(_zones, options);
-        File.WriteAllText(_zonesFilePath, jsonString);
+
+        var payload = new WarehousePayload { Zones = _zones, Products = _products };
+        string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(_filePath, json);
+    }
+
+    private class WarehousePayload
+    {
+        public List<StorageZone> Zones { get; set; } = new();
+        public List<Product> Products { get; set; } = new();
     }
 }

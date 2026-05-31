@@ -18,6 +18,11 @@ public class InMemoryWarehouseRepository : IWarehouseRepository
         return Task.FromResult(zone);
     }
 
+    public Task<IEnumerable<StorageZone>> GetAllZonesAsync()
+    {
+    return Task.FromResult<IEnumerable<StorageZone>>(_zones); 
+    }
+
     public Task<Product?> GetProductByIdAsync(Guid id)
     {
         var product = _products.FirstOrDefault(p => p.Id == id);

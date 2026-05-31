@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using MyProject.Domain;
 using MyProject.Application;
 using Xunit;
@@ -10,27 +14,24 @@ public class WarehouseTests
     public void AddProduct_ValidQuantity_ShouldIncreaseCurrentWeight()
     {
         var address = new ZoneAddress("A", 1, 1);
-        var zone = new StorageZone(Guid.NewGuid(), address, 50.0); // Ліміт 50 кг
-        var product = new Product(Guid.NewGuid(), new SKU("PROD-1111"), "Монітор", 5.0); // 5 кг
+        var zone = new StorageZone(Guid.NewGuid(), address, 50.0); 
+        var product = new Product(Guid.NewGuid(), new SKU("PROD-1111"), "Монітор", 5.0); 
 
-        zone.AddProduct(product, 4); // 4 * 5кг = 20кг
+        zone.AddProduct(product, 4);
 
         Assert.Equal(20.0, zone.CurrentWeight);
         Assert.Equal(4, zone.Items[product.Id]);
     }
 
-    
-    [Fact]
+   [Fact]
     public void AddProduct_ExceedingCapacity_ShouldThrowInvalidOperationException()
     {
-        var zone = new StorageZone(Guid.NewGuid(), new ZoneAddress("B", 1, 1), 10.0); // Ліміт 10 кг
-        var product = new Product(Guid.NewGuid(), new SKU("PROD-2222"), "Стіл", 15.0); // 15 кг
-
+        var zone = new StorageZone(Guid.NewGuid(), new ZoneAddress("B", 1, 1), 10.0); 
+        var product = new Product(Guid.NewGuid(), new SKU("PROD-2222"), "Стіл", 15.0); 
         var exception = Assert.Throws<InvalidOperationException>(() => zone.AddProduct(product, 1));
-        Assert.Contains("Перевищено ліміт ваги", exception.Message);
+        Assert.Contains("Недостатньо місця", exception.Message);
     }
 
-    
     [Fact]
     public void Constructor_InvalidSkuFormat_ShouldThrowArgumentException()
     {
@@ -39,30 +40,48 @@ public class WarehouseTests
     }
 
     [Fact]
-    public async Task ReceiveProductUseCase_NegativeQuantity_ShouldThrowArgumentException()
+    public async Task ReceiveProductUseCase_NegativeQuantity_ShouldReturnFailureResult()
     {
         var repository = new InMemoryWarehouseRepository();
         var useCase = new ReceiveProductUseCase(repository);
-        Guid workerId = Guid.NewGuid();
         Guid productId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        Guid zoneId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var result = await useCase.ExecuteAsync(productId, -5, "fast", (zone, pct) => { });
 
-        var exception = await Assert.ThrowsAsync<ArgumentException>(() => 
-            useCase.ExecuteAsync(workerId, productId, zoneId, -5));
-        
-        Assert.Contains("Кількість товару для оприбуткування повинна бути більшою за 0", exception.Message);
+        Assert.False(result.IsSuccess);
+        Assert.Contains("Кількість повинна бути > 0", result.ErrorMessage);
     }
 
     [Fact]
-    public async Task ReceiveProductUseCase_NonExistingZone_ShouldThrowKeyNotFoundException()
+    public async Task ReceiveProductUseCase_NonExistingProduct_ShouldReturnFailureResult()
     {
         var repository = new InMemoryWarehouseRepository();
         var useCase = new ReceiveProductUseCase(repository);
-        Guid workerId = Guid.NewGuid();
-        Guid productId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        Guid randomZoneId = Guid.NewGuid(); // Рандомний ID, якого немає в системі
+        Guid randomProductId = Guid.NewGuid(); 
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => 
-            useCase.ExecuteAsync(workerId, productId, randomZoneId, 1));
+        var result = await useCase.ExecuteAsync(randomProductId, 1, "fast", (zone, pct) => { });
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains("Товар не знайдено", result.ErrorMessage);
+    }
+
+    [Fact]
+    public void RemoveProduct_ExceedingAvailableQuantity_ShouldThrowInvalidOperationException()
+    {
+        var zone = new StorageZone(Guid.NewGuid(), new ZoneAddress("A", 1, 1), 50.0);
+        var product = new Product(Guid.NewGuid(), new SKU("PROD-7777"), "Телевізор", 10.0);
+        zone.AddProduct(product, 2); 
+        var ex = Assert.Throws<InvalidOperationException>(() => zone.RemoveProduct(product, 3)); 
+        Assert.Contains("Конфлікт залишків", ex.Message);
+    }
+
+    [Fact]
+    public void RemoveProduct_ToZero_ShouldFullyRemoveKeyFromDictionary()
+    {
+        var zone = new StorageZone(Guid.NewGuid(), new ZoneAddress("A", 1, 1), 50.0);
+        var product = new Product(Guid.NewGuid(), new SKU("PROD-8888"), "Чайник", 2.0);
+        zone.AddProduct(product, 5);
+        zone.RemoveProduct(product, 5);
+        Assert.False(zone.Items.ContainsKey(product.Id)); 
+        Assert.Equal(0.0, zone.CurrentWeight);
     }
 }

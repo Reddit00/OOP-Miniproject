@@ -1,39 +1,67 @@
+using System;
+using System.Collections.Generic;
+
 namespace MyProject.Domain;
+
+public delegate void CapacityWarningHandler(StorageZone zone, double occupancyPercentage);
 
 public class StorageZone
 {
-    public Guid Id { get; }
-    public ZoneAddress Address { get; }
-    public double MaxWeightCapacity { get; }
+    public Guid Id { get; private set; }
+    public ZoneAddress Address { get; private set; }
+    public double MaxCapacityWeight { get; private set; }
     public double CurrentWeight { get; private set; }
-    private readonly Dictionary<Guid, int> _items = new();
-    public IReadOnlyDictionary<Guid, int> Items => _items;
+    public Dictionary<Guid, int> Items { get; private set; } = new();
 
-    public StorageZone(Guid id, ZoneAddress address, double maxWeightCapacity)
+    public event CapacityWarningHandler? OnCapacityWarning;
+
+    public StorageZone(Guid id, ZoneAddress address, double maxCapacityWeight)
     {
-        if (maxWeightCapacity <= 0) throw new ArgumentException("Місткість ваги має бути більшою за 0.");
+        if (maxCapacityWeight <= 0) 
+            throw new ArgumentException("Максимальна місткість повинна бути більшою за 0.");
         
         Id = id;
         Address = address;
-        MaxWeightCapacity = maxWeightCapacity;
+        MaxCapacityWeight = maxCapacityWeight;
         CurrentWeight = 0;
     }
+
     public void AddProduct(Product product, int quantity)
     {
-        if (quantity <= 0) throw new ArgumentException("Кількість має бути більшою за 0.");
-        
-        double addedWeight = product.Weight * quantity;
-        if (CurrentWeight + addedWeight > MaxWeightCapacity)
-        {
-            throw new InvalidOperationException($"Перевищено ліміт ваги зони {Address}. " +
-                $"Доступно: {MaxWeightCapacity - CurrentWeight} кг, спроба додати: {addedWeight} кг.");
-        }
+        if (quantity <= 0) 
+            throw new ArgumentException("Кількість товару повинна бути більшою за 0.");
+double addedWeight = product.Weight * quantity;
+        if (CurrentWeight + addedWeight > MaxCapacityWeight) 
+            throw new InvalidOperationException($"Недостатньо місця! Доступно: {MaxCapacityWeight - CurrentWeight} кг, потрібно: {addedWeight} кг.");
 
-        if (_items.ContainsKey(product.Id))
-            _items[product.Id] += quantity;
+        if (Items.ContainsKey(product.Id))
+            Items[product.Id] += quantity;
         else
-            _items[product.Id] = quantity;
+            Items[product.Id] = quantity;
 
         CurrentWeight += addedWeight;
+
+        double occupancy = (CurrentWeight / MaxCapacityWeight) * 100;
+        if (occupancy >= 90.0)
+        {
+            OnCapacityWarning?.Invoke(this, occupancy);
+        }
+    }
+
+    public void RemoveProduct(Product product, int quantity)
+    {
+        if (quantity <= 0) 
+            throw new ArgumentException("Кількість товару для видалення повинна бути більшою за 0.");
+
+        if (!Items.ContainsKey(product.Id) || Items[product.Id] < quantity) 
+            throw new InvalidOperationException($"Конфлікт залишків: у комірці немає такої кількості товару {product.Name}.");
+
+        Items[product.Id] -= quantity;
+        CurrentWeight -= product.Weight * quantity;
+
+        if (Items[product.Id] == 0)
+        {
+            Items.Remove(product.Id);
+        }
     }
 }
