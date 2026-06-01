@@ -18,5 +18,5 @@ public class FakeWarehouseRepository : IWarehouseWritableRepository
 
     public Task<Product?> GetProductByIdAsync(Guid id) => Task.FromResult(Products.FirstOrDefault(p => p.Id == id));
 
-    public Task SaveChangesAsync() => Task.CompletedTask; // Фейковий запис в пам'яті — миттєво і без I/O помилок
+    public Task SaveChangesAsync() => Task.CompletedTask; 
 }
