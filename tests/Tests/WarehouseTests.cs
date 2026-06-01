@@ -32,6 +32,17 @@ public class AnalyticsFakeRepository : IWarehouseRepository
 
 public class WarehouseTests
 {
+    private readonly AnalyticsFakeRepository _sharedRepo;
+    private readonly TestPlacementStrategy _sharedStrategy;
+    private readonly ReceiveProductUseCase _receiveUseCase;
+
+    public WarehouseTests()
+    {
+        _sharedRepo = new AnalyticsFakeRepository();
+        _sharedStrategy = new TestPlacementStrategy();
+        _receiveUseCase = new ReceiveProductUseCase(_sharedRepo, _sharedStrategy);
+    }
+
     #region 1. Інваріанти сутностей та валідація (Entity Invariants)
 
     [Fact]
@@ -186,8 +197,7 @@ public class WarehouseTests
     [Fact]
     public async Task WarehouseAnalytics_EmptyRepository_ShouldReturnEmptyStatistics()
     {
-        var repo = new AnalyticsFakeRepository();
-        var service = new WarehouseAnalyticsService(repo);
+        var service = new WarehouseAnalyticsService(_sharedRepo);
 
         var stats = await service.GetWarehouseSummaryAsync();
 
@@ -200,8 +210,7 @@ public class WarehouseTests
     [Fact]
     public async Task WarehouseAnalytics_FindProductLocations_ProductNotFound_ShouldReturnEmpty()
     {
-        var repo = new AnalyticsFakeRepository();
-        var service = new WarehouseAnalyticsService(repo);
+        var service = new WarehouseAnalyticsService(_sharedRepo);
 
         var locations = await service.FindProductLocationsAsync(Guid.NewGuid());
 
@@ -215,12 +224,9 @@ public class WarehouseTests
     [Fact]
     public async Task ReceiveProductUseCase_NegativeQuantity_ShouldReturnFailureResult()
     {
-        var repository = new AnalyticsFakeRepository();
-        var strategy = new TestPlacementStrategy();
-        var useCase = new ReceiveProductUseCase(repository, strategy);
         Guid productId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
 
-        var result = await useCase.ExecuteAsync(productId, -5);
+        var result = await _receiveUseCase.ExecuteAsync(productId, -5);
 
         Assert.False(result.IsSuccess);
         Assert.Contains("Кількість повинна бути > 0", result.ErrorMessage);
@@ -229,12 +235,9 @@ public class WarehouseTests
     [Fact]
     public async Task ReceiveProductUseCase_NonExistingProduct_ShouldReturnFailureResult()
     {
-        var repository = new AnalyticsFakeRepository();
-        var strategy = new TestPlacementStrategy();
-        var useCase = new ReceiveProductUseCase(repository, strategy);
         Guid randomProductId = Guid.NewGuid();
 
-        var result = await useCase.ExecuteAsync(randomProductId, 1);
+        var result = await _receiveUseCase.ExecuteAsync(randomProductId, 1);
 
         Assert.False(result.IsSuccess);
         Assert.Contains("Товар не знайдено", result.ErrorMessage);

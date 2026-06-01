@@ -1,20 +1,13 @@
-## Visual Studio / VS Code Dynamic Folders
 [Bb]in/
 [Oo]bj/
 [Log]/
 .vs/
 .vscode/
-
-## User-specific files
 *.user
 *.userosscache
 *.suo
 *.userprefs
-
-## Test Results and Coverage
 TestResults/
 *.clog
-
-## OS files
 .DS_Store
 Thumbs.db
