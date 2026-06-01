@@ -1,10 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "96ezAOhtsz0=",
+  "dgSpecHash": "L30HUQqFuFI=",
   "success": true,
   "projectFilePath": "C:\\Users\\Admin\\Desktop\\OOP-MiniProject-NefododvNikita\\tests\\Tests\\MyProject.Tests.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Admin\\.nuget\\packages\\coverlet.collector\\6.0.2\\coverlet.collector.6.0.2.nupkg.sha512",
+    "C:\\Users\\Admin\\.nuget\\packages\\coverlet.msbuild\\10.0.1\\coverlet.msbuild.10.0.1.nupkg.sha512",
     "C:\\Users\\Admin\\.nuget\\packages\\microsoft.codecoverage\\17.12.0\\microsoft.codecoverage.17.12.0.nupkg.sha512",
     "C:\\Users\\Admin\\.nuget\\packages\\microsoft.net.test.sdk\\17.12.0\\microsoft.net.test.sdk.17.12.0.nupkg.sha512",
     "C:\\Users\\Admin\\.nuget\\packages\\microsoft.testplatform.objectmodel\\17.12.0\\microsoft.testplatform.objectmodel.17.12.0.nupkg.sha512",
