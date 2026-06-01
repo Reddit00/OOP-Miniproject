@@ -1,9 +1,20 @@
-namespace MyProject.Domain;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using MyProject.Domain;
 
-public interface IWarehouseRepository
+namespace MyProject.Application;
+
+public interface IWarehouseReadOnlyRepository
 {
+    Task<IEnumerable<StorageZone>> GetAllZonesAsync();
     Task<StorageZone?> GetZoneByIdAsync(Guid id);
     Task<Product?> GetProductByIdAsync(Guid id);
-    Task SaveChangesAsync();
-    Task<IEnumerable<StorageZone>> GetAllZonesAsync();
 }
+
+public interface IWarehouseWritableRepository : IWarehouseReadOnlyRepository
+{
+    Task SaveChangesAsync();
+}
+
+public interface IWarehouseRepository : IWarehouseWritableRepository { }

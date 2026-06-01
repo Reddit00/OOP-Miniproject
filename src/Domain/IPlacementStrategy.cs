@@ -2,5 +2,5 @@ namespace MyProject.Domain;
 
 public interface IPlacementStrategy
 {
-    StorageZone? FindOptimalZone(Product product, int quantity, IEnumerable<StorageZone> zones);
+    StorageZone? FindZone(IEnumerable<StorageZone> zones, Product product, int quantity);
 }

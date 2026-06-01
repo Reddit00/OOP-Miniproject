@@ -1,46 +1,41 @@
 ﻿using System;
 using System.Threading.Tasks;
 using MyProject.Domain;
-using MyProject.Application;
 
 namespace MyProject.Application;
 
 public class ReceiveProductUseCase
 {
-    private readonly IWarehouseRepository _repository;
+    private readonly IWarehouseWritableRepository _repository;
+    private readonly IPlacementStrategy _placementStrategy;
 
-    public ReceiveProductUseCase(IWarehouseRepository repository)
+    public ReceiveProductUseCase(IWarehouseWritableRepository repository, IPlacementStrategy placementStrategy)
     {
         _repository = repository;
+        _placementStrategy = placementStrategy;
     }
 
-    public async Task<Result<StorageZone>> ExecuteAsync(Guid productId, int quantity, string strategyType, CapacityWarningHandler observer)
+    public async Task<Result> ExecuteAsync(Guid productId, int quantity)
     {
-        if (quantity <= 0) return Result<StorageZone>.Failure("Кількість повинна бути > 0. [Rule_1]");
-
-        var product = await _repository.GetProductByIdAsync(productId);
-        if (product == null) return Result<StorageZone>.Failure("Товар не знайдено.");
+        if (quantity <= 0) return Result.Failure("Кількість повинна бути > 0");
 
         var allZones = await _repository.GetAllZonesAsync();
-        var targetZone = allZones
-        .Where(z => z.MaxCapacityWeight - z.CurrentWeight >= product.Weight * quantity)
-        .OrderByDescending(z => z.MaxCapacityWeight - z.CurrentWeight)
-        .FirstOrDefault();
+        var product = await _repository.GetProductByIdAsync(productId);
 
-        if (targetZone == null) return Result<StorageZone>.Failure("Немає вільної комірки під таку вагу. [Rule_2]");
+        if (product == null) return Result.Failure("Товар не знайдено");
+
+        var targetZone = _placementStrategy.FindZone(allZones, product, quantity);
+        if (targetZone == null) return Result.Failure("Немає вільної комірки для такого об'єму");
 
         try
         {
-            targetZone.OnCapacityWarning += observer; 
             targetZone.AddProduct(product, quantity);
-            targetZone.OnCapacityWarning -= observer;
-
-            await _repository.SaveChangesAsync();
-            return Result<StorageZone>.Success(targetZone);
+            await _repository.SaveChangesAsync(); 
+            return Result.Success();
         }
         catch (Exception ex)
         {
-            return Result<StorageZone>.Failure(ex.Message);
+            return Result.Failure(ex.Message);
         }
     }
 }
