@@ -64,7 +64,6 @@ public class FileWarehouseTestRepository : IWarehouseRepository
             Zones = dto.Zones.Select(zDto =>
             {
                 var zone = new StorageZone(zDto.Id, new ZoneAddress(zDto.Sector, zDto.Row, zDto.Shelf), zDto.MaxWeight);
-                // Відновлюємо внутрішні заповнені товари через рефлексію або пряме додавання, якщо домен дозволяє
                 foreach (var item in zDto.Items)
                 {
                     var mockProd = new Product(item.Key, new SKU("PROD-0000"), "Loaded", 0.1);
