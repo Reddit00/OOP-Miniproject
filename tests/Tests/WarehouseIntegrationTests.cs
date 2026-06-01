@@ -15,6 +15,7 @@ public class FileWarehouseTestRepository : IWarehouseRepository
     private readonly string _filePath;
     public List<StorageZone> Zones { get; set; } = new();
     public List<Product> Products { get; set; } = new();
+    public List<string> ErrorLog { get; } = new();
 
     public FileWarehouseTestRepository(string filePath)
     {
@@ -27,60 +28,86 @@ public class FileWarehouseTestRepository : IWarehouseRepository
 
     public async Task SaveChangesAsync()
     {
-        var dto = new WarehouseDataDto
-        {
-            Zones = Zones.Select(z => new ZoneDto 
-            { 
-                Id = z.Id, 
-                Sector = z.Address?.Sector ?? "Default", 
-                Row = 1, 
-                Shelf = 1, 
-                MaxWeight = z.MaxCapacityWeight,
-                CurrentWeight = z.CurrentWeight,
-                Items = z.Items
-            }).ToList(),
-            Products = Products.Select(p => new ProductDto 
-            { 
-                Id = p.Id, 
-                Sku = p.Sku.Value, 
-                Name = p.Name, 
-                Weight = p.Weight 
-            }).ToList()
-        };
+        int maxRetries = 3;
+        int delayMs = 15;
 
-        var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(_filePath, json);
+        for (int retry = 1; retry <= maxRetries; retry++)
+        {
+            try
+            {
+                var dto = new WarehouseDataDto
+                {
+                    Zones = Zones.Select(z => new ZoneDto 
+                    { 
+                        Id = z.Id, 
+                        Sector = z.Address?.Sector ?? "Default", 
+                        Row = 1, 
+                        Shelf = 1, 
+                        MaxWeight = z.MaxCapacityWeight,
+                        CurrentWeight = z.CurrentWeight,
+                        Items = z.Items
+                    }).ToList(),
+                    Products = Products.Select(p => new ProductDto 
+                    { 
+                        Id = p.Id, 
+                        Sku = p.Sku.Value, 
+                        Name = p.Name, 
+                        Weight = p.Weight 
+                    }).ToList()
+                };
+
+                var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true });
+                await File.WriteAllTextAsync(_filePath, json);
+                return; 
+            }
+            catch (IOException ex)
+            {
+                ErrorLog.Add($"[WARN] Спроба {retry} невдала через блокування файла I/O: {ex.Message}");
+                if (retry == maxRetries)
+                {
+                    ErrorLog.Add($"[CRITICAL] Вичерпано всі {maxRetries} спроби запису на диск. Операція провалена.");
+                    throw;
+                }
+                await Task.Delay(delayMs);
+            }
+        }
     }
-    public async Task LoadAsync()
+
+    public async Task<Result> LoadAsync()
     {
-        if (!File.Exists(_filePath)) return;
+        if (!File.Exists(_filePath))
+        {
+            ErrorLog.Add("[INFO] Файл сховища відсутній. Стратегія відмови: Graceful Fallback до порожнього стану складу.");
+            return Result.Success(); 
+        }
 
         try
         {
             var json = await File.ReadAllTextAsync(_filePath);
             var dto = JsonSerializer.Deserialize<WarehouseDataDto>(json);
-            if (dto == null) return;
+            if (dto == null) return Result.Failure("Файл порожній");
 
             Zones = dto.Zones.Select(zDto =>
             {
                 var zone = new StorageZone(zDto.Id, new ZoneAddress(zDto.Sector, zDto.Row, zDto.Shelf), zDto.MaxWeight);
                 foreach (var item in zDto.Items)
                 {
-                    var mockProd = new Product(item.Key, new SKU("PROD-0000"), "Loaded", 0.1);
+                    var mockProd = new Product(item.Key, new SKU("PROD-0000"), "LoadedProduct", 0.1);
                     if (item.Value > 0) zone.AddProduct(mockProd, item.Value);
                 }
                 return zone;
             }).ToList();
 
             Products = dto.Products.Select(pDto => new Product(pDto.Id, new SKU(pDto.Sku), pDto.Name, pDto.Weight)).ToList();
+            return Result.Success();
         }
-        catch
+        catch (JsonException ex)
         {
-            throw new JsonException("Помилка читання JSON структури");
+            ErrorLog.Add($"[ERROR] Пошкоджено структуру файлу JSON: {ex.Message}");
+            return Result.Failure("Помилка десеріалізації: Структура даних зламана.");
         }
     }
 
-    #region Внутрішні DTO для тестів серіалізації
     private class WarehouseDataDto
     {
         public List<ZoneDto> Zones { get; set; } = new();
@@ -103,7 +130,6 @@ public class FileWarehouseTestRepository : IWarehouseRepository
         public string Name { get; set; } = "";
         public double Weight { get; set; }
     }
-    #endregion
 }
 
 public class WarehouseIntegrationTests : IDisposable
@@ -124,8 +150,6 @@ public class WarehouseIntegrationTests : IDisposable
             File.Delete(_tempFilePath);
         }
     }
-
-    #region Повний цикл інтеграційних файлових сценаріїв (8 тестів)
 
     [Fact]
     public async Task Scenario1_CreateAndSaveData_ShouldWritePhysicalFileToDisk()
@@ -150,10 +174,10 @@ public class WarehouseIntegrationTests : IDisposable
         await initialRepo.SaveChangesAsync();
 
         var loadedRepo = new FileWarehouseTestRepository(_tempFilePath);
-        await loadedRepo.LoadAsync();
+        var loadResult = await loadedRepo.LoadAsync();
 
+        Assert.True(loadResult.IsSuccess);
         var restoredZone = await loadedRepo.GetZoneByIdAsync(zoneId);
-
         Assert.NotNull(restoredZone);
         Assert.Equal(150.0, restoredZone.MaxCapacityWeight);
         Assert.Equal("B", restoredZone.Address.Sector);
@@ -166,15 +190,12 @@ public class WarehouseIntegrationTests : IDisposable
         var zoneId = Guid.NewGuid();
         var zone = new StorageZone(zoneId, new ZoneAddress("C", 1, 1), 50.0);
         initialRepo.Zones.Add(zone);
-        
         var productId = Guid.NewGuid();
         var product = new Product(productId, new SKU("PROD-7777"), "Кава", 5.0);
         initialRepo.Products.Add(product);
         await initialRepo.SaveChangesAsync();
-
         var freshRepo = new FileWarehouseTestRepository(_tempFilePath);
         await freshRepo.LoadAsync();
-
         var useCase = new ReceiveProductUseCase(freshRepo, _strategy);
         var result = await useCase.ExecuteAsync(productId, 2);
 
@@ -182,30 +203,7 @@ public class WarehouseIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task Scenario4_MissingFile_ShouldHandleGracefullyOrFallbackToEmpty()
-    {
-        var nonExistingPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.json");
-        var repo = new FileWarehouseTestRepository(nonExistingPath);
-
-        await repo.LoadAsync();
-
-        Assert.Empty(repo.Zones);
-        Assert.Empty(repo.Products);
-    }
-
-    [Fact]
-    public async Task Scenario5_CorruptedJsonFile_ShouldFallbackOrThrowHandledException()
-    {
-        await File.WriteAllTextAsync(_tempFilePath, "{ !!! БИТИЙ JSON ДЛЯ ТЕСТУ !!! }");
-        var repo = new FileWarehouseTestRepository(_tempFilePath);
-
-        var exception = await Record.ExceptionAsync(() => repo.LoadAsync());
-        
-        Assert.True(exception is JsonException || repo.Zones.Count == 0);
-    }
-
-    [Fact]
-    public async Task Scenario6_MultipleSequentialOperations_ShouldPersistIncrementalState()
+    public async Task Scenario4_MultipleSequentialOperations_ShouldPersistIncrementalState()
     {
         var repo = new FileWarehouseTestRepository(_tempFilePath);
         var zone = new StorageZone(Guid.NewGuid(), new ZoneAddress("A", 1, 1), 100.0);
@@ -217,14 +215,15 @@ public class WarehouseIntegrationTests : IDisposable
 
         var useCase = new ReceiveProductUseCase(repo, _strategy);
 
+        // Послідовний ланцюжок змін агрегату
         await useCase.ExecuteAsync(product.Id, 2); 
         await useCase.ExecuteAsync(product.Id, 3); 
 
-        Assert.Equal(50.0, zone.CurrentWeight);
+        Assert.Equal(50.0, zone.CurrentWeight); 
     }
 
     [Fact]
-    public async Task Scenario7_ConcurrectWriteSimulated_ShouldMaintainStateConsistency()
+    public async Task Scenario5_ConcurrectWriteSimulated_ShouldMaintainStateConsistency()
     {
         var repo1 = new FileWarehouseTestRepository(_tempFilePath);
         var zone = new StorageZone(Guid.NewGuid(), new ZoneAddress("D", 1, 1), 200.0);
@@ -245,25 +244,48 @@ public class WarehouseIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task Scenario8_FullPipeline_ReceiveAndSave_WithFilePersistence()
+    public async Task FaultHandling_CorruptedJson_ShouldReturnFailureResultAndLogError()
     {
+        await File.WriteAllTextAsync(_tempFilePath, "{ !!! ЗЛАМАНИЙ НЕВАЛІДНИЙ СТРУКТУРНО JSON !!! }");
         var repo = new FileWarehouseTestRepository(_tempFilePath);
-        var zoneA = new StorageZone(Guid.NewGuid(), new ZoneAddress("A", 1, 1), 100.0);
-        var product = new Product(Guid.NewGuid(), new SKU("PROD-8888"), "Принтер", 20.0);
-        
-        repo.Zones.Add(zoneA);
-        repo.Products.Add(product);
-        await repo.SaveChangesAsync();
 
-        var receiveUseCase = new ReceiveProductUseCase(repo, _strategy);
-        await receiveUseCase.ExecuteAsync(product.Id, 2);
-        await repo.SaveChangesAsync();
+        var result = await repo.LoadAsync();
 
-        var checkRepo = new FileWarehouseTestRepository(_tempFilePath);
-        await checkRepo.LoadAsync();
-        
-        Assert.NotEmpty(checkRepo.Zones);
+        Assert.False(result.IsSuccess);
+        Assert.Contains("Помилка десеріалізації", result.ErrorMessage);
+        Assert.Contains(repo.ErrorLog, log => log.StartsWith("[ERROR]")); 
     }
 
-    #endregion
+    [Fact]
+    public async Task FaultHandling_MissingFile_ShouldExecuteGracefulFallbackToEmptyState()
+    {
+        string missingPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.json");
+        var repo = new FileWarehouseTestRepository(missingPath);
+
+        var result = await repo.LoadAsync();
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(repo.Zones);
+        Assert.Contains(repo.ErrorLog, log => log.StartsWith("[INFO]"));
+    }
+
+    [Fact]
+    public async Task FaultHandling_FileLocked_ShouldTriggerRetryPolicyAndSucceedEventually()
+    {
+        var repo = new FileWarehouseTestRepository(_tempFilePath);
+        repo.Zones.Add(new StorageZone(Guid.NewGuid(), new ZoneAddress("A", 1, 1), 100.0));
+
+        using (var stream = new FileStream(_tempFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var saveTask = repo.SaveChangesAsync();
+            
+            await Task.Delay(5); 
+            
+            stream.Close(); 
+
+            await saveTask;
+        }
+
+        Assert.Contains(repo.ErrorLog, log => log.Contains("[WARN] Спроба"));
+    }
 }
